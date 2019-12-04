@@ -1,5 +1,4 @@
 /* @flow */
-const crypto = require('crypto');
 
 /*::
 type FlowReport = {
@@ -73,12 +72,13 @@ function messageToString(message /*: Message */) /*: string */ {
 }
 
 function blameToString(blame /*: BlameMessage */) /*: string */ {
+  const path = `${blame.path}:${blame.line}`;
   let location = '';
   if ((blame.context, blame.end - blame.start + 1 > 0)) {
     location = '^'.repeat(blame.end - blame.start + 1);
   }
   return (
-    blame.context + '\n' + ' '.repeat(Math.max(0, blame.start - 1)) + location + ' ' + blame.descr
+    path + '\n' + blame.context + '\n' + ' '.repeat(Math.max(0, blame.start - 1)) + location + ' ' + blame.descr
   );
 }
 
@@ -86,45 +86,55 @@ function commentToString(comment /*: CommentMessage */) /*: string */ {
   return comment.descr;
 }
 
-module.exports = function flowJUnitTransformer(input /*: FlowReport */) {
-  const errors = input.errors.map(error => {
-    const context = error.message[0].context;
+function parseErrors(errors /* Array[ErrorReport] */) /*: Array[string] */ {
+  return errors.map(error => {
+    const path = error.message[0].path;
     const title = error.message.map(message => message.descr).join(' ');
     const message = errorToString(error);
-    const hash = crypto
-      .createHash('sha256')
-      .update(message)
-      .digest('hex')
-      .substr(0, 16);
     return `
     <testcase
       time="0"
-      classname="org.flow.${error.level.toLowerCase()}.${hash}"
+      classname="${path}"
       id="flow-error"
-      name="org.flow.${error.level.toLowerCase()}.${hash}"
+      name="${path}"
+    >
+      <failure
+        type="${error.level.toUpperCase()}"
+        message="${title}"
       >
-        <failure
-          type="${error.level.toUpperCase()}"
-          message="${title}"
-          >
-            <![CDATA[
+        <![CDATA[
 ${message}
-            ]]>
-          </failure>
-        </testcase>`;
+        ]]>
+      </failure>
+    </testcase>`;
   });
+}
 
+module.exports = function flowJUnitTransformer(input /*: FlowReport */) {
+  let testcase = [];
+  if (input.passed) {
+    testcase.push(`
+    <testcase
+      time="0"
+      classname="flow"
+      id="flow-success"
+      name="flow"
+    >
+    </testcase>`);
+  } else {
+    testcase = parseErrors(input.errors);
+  }
   return `<?xml version="1.0" encoding="UTF-8" ?>
 <testsuites id="flow">
   <testsuite
     package="org.flow"
-    tests="${errors.length}"
+    tests="${testcase.length}"
     time="0"
     skipped="0"
-    errors="${errors.length}"
+    errors="${testcase.length}"
     id="flow-suite"
     name="Flow type check"
-    >${errors.join('')}
+  >${testcase.join('')}
   </testsuite>
 </testsuites>
 `;
